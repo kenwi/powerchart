@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample laptop power draw every 5 seconds to a log
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/powerlog --loop --interval 5
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

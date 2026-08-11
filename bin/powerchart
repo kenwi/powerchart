@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""powerchart - draw a terminal chart of the logged power draw.
+
+Usage:
+  powerchart                last 60 minutes (default)
+  powerchart --since 15m    last 15 minutes
+  powerchart --all          entire log
+  powerchart --charge       also show a charge % sparkline
+  powerchart --png [FILE]   also render a PNG via matplotlib
+  powerchart --show         open an interactive matplotlib window (hover to
+                            probe exact values at a given time)
+
+The log is written by the powerlog systemd service (or `powerlog --once`).
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import os
+import shutil
+import subprocess
+import sys
+
+BARS = "▁▂▃▄▅▆▇█"
+
+DEFAULT_LOG = os.path.expanduser("~/.local/state/powerlog/power.log")
+
+
+def parse_window(s: str) -> datetime.timedelta:
+    unit = s[-1]
+    try:
+        n = float(s[:-1])
+    except ValueError:
+        raise SystemExit(f"invalid --since value: {s!r} (use e.g. 15m, 2h)")
+    if unit == "s":
+        return datetime.timedelta(seconds=n)
+    if unit == "m":
+        return datetime.timedelta(minutes=n)
+    if unit == "h":
+        return datetime.timedelta(hours=n)
+    raise SystemExit(f"invalid --since value: {s!r} (use e.g. 15m, 2h)")
+
+
+def load(path: str):
+    rows = []
+    with open(path) as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 4:
+                continue
+            ts, power, cap, status = parts[:4]
+            try:
+                t = datetime.datetime.fromisoformat(ts)
+            except ValueError:
+                continue
+            rows.append((t, float(power), float(cap), status))
+    return rows
+
+
+def sparkline(values, width: int) -> str:
+    n = len(values)
+    if n == 0:
+        return ""
+    if n > width:
+        step = n / width
+        buckets = [values[int(i * step) : int((i + 1) * step)] for i in range(width)]
+        samples = [sum(b) / len(b) for b in buckets]
+    else:
+        samples = values
+    lo, hi = min(samples), max(samples)
+    rng = hi - lo
+    out = []
+    for v in samples:
+        if rng == 0:
+            out.append(BARS[3])
+        else:
+            out.append(BARS[round((v - lo) / rng * (len(BARS) - 1))])
+    return "".join(out)
+
+
+def fmt_axis(t: datetime.datetime) -> str:
+    return t.strftime("%H:%M:%S")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--since", default="60m", metavar="30m", help="window (default 60m)")
+    ap.add_argument("--all", action="store_true", help="chart the entire log")
+    ap.add_argument("--charge", action="store_true", help="also plot charge %%")
+    ap.add_argument("--png", nargs="?", const="/tmp/powerchart.png", metavar="FILE",
+                    help="also render a PNG")
+    ap.add_argument("--show", action="store_true",
+                    help="open an interactive matplotlib window to probe exact values")
+    ap.add_argument("--log", default=os.environ.get("POWERLOG_FILE", DEFAULT_LOG),
+                    help="log file to read")
+    args = ap.parse_args()
+
+    if not os.path.exists(args.log):
+        sys.exit(f"no log at {args.log} — start the service: systemctl --user enable --now powerlog")
+
+    rows = load(args.log)
+    if not rows:
+        sys.exit("log is empty — waiting for the first sample")
+
+    now = datetime.datetime.now()
+    if not args.all:
+        window = parse_window(args.since)
+        rows = [r for r in rows if now - r[0] <= window]
+
+    if not rows:
+        sys.exit("no samples in the requested window yet")
+
+    times = [r[0] for r in rows]
+    powers = [r[1] for r in rows]
+    caps = [r[2] for r in rows]
+
+    cols = shutil.get_terminal_size().columns or 80
+    bar_width = max(20, cols - 24)
+
+    avg = sum(powers) / len(powers)
+    peak = max(powers)
+    low = min(powers)
+    cur = powers[-1]
+    span = window if not args.all else times[-1] - times[0]
+
+    print(f"Power draw — {str(span)}  ({len(powers)} samples)")
+    print(f"now {cur:.2f}W  {sparkline(powers, bar_width)}  peak {peak:.2f}W / avg {avg:.2f}W / min {low:.2f}W")
+    print(f"{'':>5}{fmt_axis(times[0]):<{bar_width}}{fmt_axis(times[-1])}")
+
+    if args.charge:
+        ccur = caps[-1]
+        print(f"Charge %   {int(ccur)}  {sparkline(caps, bar_width)}  peak {max(caps):.0f}% / min {min(caps):.0f}%")
+
+    statuses = {r[3] for r in rows}
+    print("Status: " + ", ".join(sorted(statuses)) if len(statuses) <= 3 else "")
+
+    if args.png or args.show:
+        try:
+            import matplotlib
+        except ImportError:
+            sys.exit("matplotlib not installed — plotting unavailable")
+
+        if args.png and not args.show:
+            matplotlib.use("Agg")
+
+        import matplotlib.dates as mdates
+        import matplotlib.pyplot as plt
+
+        statuses = [r[3] for r in rows]
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 5), sharex=True)
+        (line1,) = ax1.plot(times, powers, color="#7aa2f7", lw=1.2)
+        ax1.set_ylabel("Watts")
+        ax1.set_title("Total system power draw")
+        ax1.grid(alpha=0.3)
+        (line2,) = ax2.plot(times, caps, color="#9ece6a", lw=1.2)
+        ax2.set_ylabel("Charge %")
+        ax2.set_ylim(0, 100)
+        ax2.grid(alpha=0.3)
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+
+        annot = ax1.annotate(
+            "",
+            xy=(0, 0), xytext=(12, 12), textcoords="offset points",
+            bbox=dict(boxstyle="round", fc="#1a1b26", ec="#3b4261", alpha=0.9),
+            color="#c0caf5", fontsize=9,
+        )
+        annot.set_visible(False)
+
+        def on_move(event):
+            if event.inaxes not in (ax1, ax2) or event.xdata is None:
+                annot.set_visible(False)
+                fig.canvas.draw_idle()
+                return
+            i = min(range(len(times)), key=lambda j: abs(mdates.date2num(times[j]) - event.xdata))
+            annot.xy = (mdates.date2num(times[i]), powers[i])
+            annot.set_text(
+                f"{times[i].strftime('%Y-%m-%d %H:%M:%S')}  "
+                f"{powers[i]:.2f} W  {caps[i]:.0f}%  {statuses[i]}"
+            )
+            annot.set_visible(True)
+            fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect("motion_notify_event", on_move)
+        fig.tight_layout()
+
+    if args.png:
+        fig.savefig(args.png, dpi=150)
+        print(f"PNG written to {args.png}")
+        if not args.show and ("DISPLAY" in os.environ or "WAYLAND_DISPLAY" in os.environ):
+            subprocess.Popen(["xdg-open", args.png])
+
+    if args.show:
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# powerlog - sample total laptop power draw, charge % and battery status,
+# appending one tab-separated line to a log file.
+#
+#   powerlog --once                 append a single sample
+#   powerlog --loop [--interval N]  sample forever (used by the systemd service)
+#
+# Env overrides:
+#   POWERLOG_FILE       log path (default ~/.local/state/powerlog/power.log)
+#   POWERLOG_INTERVAL   seconds between samples (default 5)
+set -euo pipefail
+
+LOG="${POWERLOG_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/powerlog/power.log}"
+INTERVAL="${POWERLOG_INTERVAL:-5}"
+MODE=once
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --once) MODE=once; shift ;;
+        --loop) MODE=loop; shift ;;
+        --interval)
+            INTERVAL="$2"; shift 2 ;;
+        *) echo "powerlog: unknown argument: $1" >&2; exit 1 ;;
+    esac
+done
+
+if ! [[ "$INTERVAL" =~ ^[0-9]+$ ]] || [[ "$INTERVAL" -lt 1 ]]; then
+    echo "powerlog: invalid interval: $INTERVAL" >&2
+    exit 1
+fi
+
+probe() {
+    local power_u=0 capacity= status= ac=
+    local batteries=()
+
+    for bat in /sys/class/power_supply/BAT*; do
+        [[ -d "$bat" ]] || continue
+        [[ -f "$bat/power_now" ]] || continue
+        batteries+=("$bat")
+    done
+
+    if [[ ${#batteries[@]} -gt 0 ]]; then
+        local total=0 bat
+        for bat in "${batteries[@]}"; do
+            total=$(( total + $(<"$bat/power_now") ))
+        done
+        power_u=$total
+        capacity=$(<"${batteries[0]}/capacity")
+        status=$(<"${batteries[0]}/status")
+    fi
+
+    if [[ -r /sys/class/power_supply/AC/online ]]; then
+        ac=$(< /sys/class/power_supply/AC/online)
+    fi
+    if [[ -z "$status" ]]; then
+        [[ "$ac" == 1 ]] && status=AC || status=BAT
+    fi
+
+    local ts watts
+    ts=$(date +%Y-%m-%dT%H:%M:%S)
+    watts=$(awk -v u="$power_u" 'BEGIN { printf "%.2f", u/1000000 }')
+    printf '%s\t%s\t%s\t%s\n' "$ts" "$watts" "${capacity:-0}" "$status"
+}
+
+mkdir -p "$(dirname "$LOG")"
+if [[ ! -f "$LOG" ]]; then
+    printf '#timestamp\tpower_w\tcharge_pct\tstatus\n' > "$LOG"
+fi
+
+if [[ "$MODE" == once ]]; then
+    probe >> "$LOG"
+    exit 0
+fi
+
+while true; do
+    probe >> "$LOG"
+    now=$(date +%s)
+    next=$(( (now / INTERVAL + 1) * INTERVAL ))
+    wait=$(( next - now ))
+    [[ $wait -lt 0 ]] && wait=0
+    sleep "$wait"
+done
