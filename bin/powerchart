@@ -7,6 +7,7 @@ Usage:
   powerchart --all          entire log
   powerchart --charge       also show a charge % sparkline
   powerchart --png [FILE]   also render a PNG via matplotlib
+  powerchart --theme dark   dark plot background (works with --png / --show)
   powerchart --show         open an interactive matplotlib window (hover to
                             probe exact values at a given time)
 
@@ -24,6 +25,17 @@ import sys
 BARS = "▁▂▃▄▅▆▇█"
 
 DEFAULT_LOG = os.path.expanduser("~/.local/state/powerlog/power.log")
+
+THEMES = {
+    "light": dict(
+        bg="#ffffff", grid="#d9d9d9", text="#111111",
+        power="#1f6feb", charge="#0e8a16",
+    ),
+    "dark": dict(
+        bg="#1a1b26", grid="#2c2e42", text="#c0caf5",
+        power="#7aa2f7", charge="#9ece6a",
+    ),
+}
 
 
 def parse_window(s: str) -> datetime.timedelta:
@@ -96,6 +108,8 @@ def main() -> None:
                     help="also render a PNG")
     ap.add_argument("--show", action="store_true",
                     help="open an interactive matplotlib window to probe exact values")
+    ap.add_argument("--theme", default="light", choices=sorted(THEMES),
+                    help="plot color theme (default light)")
     ap.add_argument("--log", default=os.environ.get("POWERLOG_FILE", DEFAULT_LOG),
                     help="log file to read")
     args = ap.parse_args()
@@ -151,13 +165,25 @@ def main() -> None:
         import matplotlib.dates as mdates
         import matplotlib.pyplot as plt
 
+        t = THEMES[args.theme]
+        plt.rcParams.update({
+            "figure.facecolor": t["bg"],
+            "axes.facecolor": t["bg"],
+            "axes.edgecolor": t["text"],
+            "axes.labelcolor": t["text"],
+            "xtick.color": t["text"],
+            "ytick.color": t["text"],
+            "text.color": t["text"],
+            "grid.color": t["grid"],
+        })
+
         statuses = [r[3] for r in rows]
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 5), sharex=True)
-        (line1,) = ax1.plot(times, powers, color="#7aa2f7", lw=1.2)
+        (line1,) = ax1.plot(times, powers, color=t["power"], lw=1.2)
         ax1.set_ylabel("Watts")
         ax1.set_title("Total system power draw")
         ax1.grid(alpha=0.3)
-        (line2,) = ax2.plot(times, caps, color="#9ece6a", lw=1.2)
+        (line2,) = ax2.plot(times, caps, color=t["charge"], lw=1.2)
         ax2.set_ylabel("Charge %")
         ax2.set_ylim(0, 100)
         ax2.grid(alpha=0.3)
@@ -166,8 +192,8 @@ def main() -> None:
         annot = ax1.annotate(
             "",
             xy=(0, 0), xytext=(12, 12), textcoords="offset points",
-            bbox=dict(boxstyle="round", fc="#1a1b26", ec="#3b4261", alpha=0.9),
-            color="#c0caf5", fontsize=9,
+            bbox=dict(boxstyle="round", fc=t["bg"], ec=t["grid"], alpha=0.95),
+            color=t["text"], fontsize=9,
         )
         annot.set_visible(False)
 

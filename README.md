@@ -82,6 +82,7 @@ powerchart --charge        # also show a charge % sparkline
 powerchart --show          # interactive window; hover to probe exact values
 powerchart --png           # render PNG to /tmp/powerchart.png and open it
 powerchart --png ~/p.png   # PNG to a custom path
+powerchart --theme dark    # dark plot background (also works with --show)
 powerchart --help          # all options
 ```
 
