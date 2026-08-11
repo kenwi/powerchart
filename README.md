@@ -133,8 +133,38 @@ bindd = SUPER, B, Power chart (PNG), exec, /home/you/.local/bin/powerchart --png
 
 This disables and removes the service, the scripts, and the log data.
 
+## Understanding the numbers
+
+While discharging, `power_w` is the true system draw (what the CPU, GPU,
+screen, Wi-Fi, etc. consume together). While charging it is **not** — it
+reports the power flowing *into* the battery.
+
+`power_now` is the battery's own instantaneous power (voltage × current),
+positive while charging. This means the log shows the charge power **in
+addition to** the system draw. Plugging in the charger typically shows a
+spike to ~30 W (at 12.9 V that's ≈ 2.4 A of charge current) that slowly
+decays:
+
+```
+21:35:35  30.75 W  79%  Charging   ← charger plugged in
+21:35:45  29.84 W  79%  Charging
+21:41:50  22.88 W  83%  Charging   ← second plug-in
+21:43:15  19.76 W  84%  Charging
+```
+
+This decay is the battery's normal **CC→CV charge curve**: the charge
+controller holds a constant ~2.4 A until roughly 80% (constant-current
+phase), then switches to constant-voltage mode and tapers the current
+exponentially as the battery fills. The spike and taper are expected and
+healthy — every lithium battery charges this way.
+
+Notes:
+
+- If you're measuring system power, trust `Discharging` samples only.
+- Setting a charge threshold (e.g. stop at 80%) cuts off the taper tail and
+  reduces battery wear, but does not remove the initial peak below the
+  threshold.
+
 ## Notes
 
-- `power_now` only reports while on battery; while charging, charge % still
-  updates and status shows `Charging` / `Full`.
 - The log grows ~17 KB/day at 5-second sampling (~43 KB/day at 2s).
