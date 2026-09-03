@@ -12,7 +12,7 @@ watts), so it reflects the whole machine: CPU, GPU, screen, Wi-Fi, everything.
 - Tab-separated log with timestamp, watts, charge %, battery status
 - Terminal chart with Unicode bars — no extra dependencies
 - Interactive matplotlib window to probe exact values at a given time (`--show`)
-- Optional PNG export
+- Optional PNG export (default 1800x750; override with `--size WxH`)
 - No root required; everything runs in userspace
 
 ## Requirements
@@ -82,6 +82,7 @@ powerchart --charge        # also show a charge % sparkline
 powerchart --show          # interactive window; hover to probe exact values
 powerchart --png           # render PNG to /tmp/powerchart.png and open it
 powerchart --png ~/p.png   # PNG to a custom path
+powerchart --size 875x600  # fixed pixel size for --png / --show
 powerchart --theme dark    # dark plot background (also works with --show)
 powerchart --help          # all options
 ```
@@ -122,7 +123,7 @@ systemctl --user daemon-reload && systemctl --user restart powerlog
 ### Keybinding (Hyprland example)
 
 ```conf
-bindd = SUPER, B, Power chart (PNG), exec, /home/you/.local/bin/powerchart --png
+bindd = SUPER, B, Power chart (PNG 875x600), exec, /home/you/.local/bin/powerchart --png --size 875x600
 ```
 
 ## Uninstall

@@ -7,6 +7,8 @@ Usage:
   powerchart --all          entire log
   powerchart --charge       also show a charge % sparkline
   powerchart --png [FILE]   also render a PNG via matplotlib
+  powerchart --size 875x600 fixed pixel size for --png / --show (default scales
+                            to 1800x750 @ 150 dpi)
   powerchart --theme dark   dark plot background (works with --png / --show)
   powerchart --show         open an interactive matplotlib window (hover to
                             probe exact values at a given time)
@@ -36,6 +38,19 @@ THEMES = {
         power="#7aa2f7", charge="#9ece6a",
     ),
 }
+
+
+def parse_size(s: str) -> tuple[int, int]:
+    parts = s.lower().replace("*", "x").split("x")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError(f"invalid --size {s!r} (use e.g. 875x600)")
+    try:
+        w, h = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid --size {s!r} (use e.g. 875x600)")
+    if w < 1 or h < 1:
+        raise argparse.ArgumentTypeError(f"invalid --size {s!r}: width and height must be >= 1")
+    return w, h
 
 
 def parse_window(s: str) -> datetime.timedelta:
@@ -106,6 +121,9 @@ def main() -> None:
     ap.add_argument("--charge", action="store_true", help="also plot charge %%")
     ap.add_argument("--png", nargs="?", const="/tmp/powerchart.png", metavar="FILE",
                     help="also render a PNG")
+    ap.add_argument("--size", type=parse_size, metavar="WxH",
+                    help="fixed pixel size for --png / --show (e.g. 875x600); "
+                         "default is 12in wide, 5in tall @ 150 dpi (1800x750)")
     ap.add_argument("--show", action="store_true",
                     help="open an interactive matplotlib window to probe exact values")
     ap.add_argument("--theme", default="light", choices=sorted(THEMES),
@@ -178,7 +196,15 @@ def main() -> None:
         })
 
         statuses = [r[3] for r in rows]
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 5), sharex=True)
+        if args.size:
+            # Fixed pixel size: inches * dpi = pixels
+            png_dpi = 100
+            figsize = (args.size[0] / png_dpi, args.size[1] / png_dpi)
+        else:
+            # Original default: 12in wide, 5in tall @ 150 dpi (1800x750)
+            png_dpi = 150
+            figsize = (12, 5)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, sharex=True)
         (line1,) = ax1.plot(times, powers, color=t["power"], lw=1.2)
         ax1.set_ylabel("Watts")
         ax1.set_title("Total system power draw")
@@ -215,7 +241,7 @@ def main() -> None:
         fig.tight_layout()
 
     if args.png:
-        fig.savefig(args.png, dpi=150)
+        fig.savefig(args.png, dpi=png_dpi)
         print(f"PNG written to {args.png}")
         if not args.show and ("DISPLAY" in os.environ or "WAYLAND_DISPLAY" in os.environ):
             subprocess.Popen(["xdg-open", args.png])
